@@ -1,5 +1,4 @@
 var path = require('path');
-var HtmlwebpackPlugin = require('html-webpack-plugin');
 var OpenBrowserPlugin = require('open-browser-webpack-plugin');
 var webpack = require('webpack');
 var merge = require('webpack-merge');
@@ -7,10 +6,6 @@ var Clean = require('clean-webpack-plugin');
 var ExtractTextPlugin = require('extract-text-webpack-plugin');
 var StaticSiteGeneratorPlugin = require('static-site-generator-webpack-plugin');
 var data = require('./app/data.js')
-var Main = require('./app/components/Main.jsx');
-var fs = require('fs');
-var React = require('react');
-import ReactDOMServer from 'react-dom/server';
 
 var pkg = require('./package.json');
 
@@ -24,7 +19,7 @@ process.env.BABEL_ENV = TARGET;
 var common = {
   entry: APP_PATH,
   resolve: {
-    extensions: ['', '.js', '.jsx']
+    extensions: ['', '.js', '.jsx', '.hbs', '.scss']
   },
 
   output: {
@@ -36,7 +31,7 @@ var common = {
   module: {
     preLoaders: [
       {
-        test: /\.js?$/,
+        test: /\.js$/,
         loaders: ['eslint'],
         // define an include so we check just the files we need
         include: APP_PATH
@@ -45,61 +40,74 @@ var common = {
 
     loaders: [
       {
+        test: /\.hbs$/,
+        loader: 'handlebars-loader'
+      },
+      {
         test: /\.jsx?$/,
-        loaders: ['babel'],
-        include: APP_PATH
+        loader: 'babel',
+        include: APP_PATH,
+        query: {
+          cacheDirectory: true,
+          presets: ['es2015', 'react']
+        }
       }
     ]
   },
 
   plugins: [
-
-    new HtmlwebpackPlugin({
-      title: 'Static app',
-      templateContent: renderJSX(
-        fs.readFileSync(path.join(__dirname, 'templates/index.tpl'), 'utf8'),
-        {
-          app: ReactDOMServer.renderToString(<Main />)
-        })
-    })//,
-
-    //new StaticSiteGeneratorPlugin('bundle.js', data.routes, , { locals... })
+    new StaticSiteGeneratorPlugin('bundle.js', data.routes, data)
   ]
 };
 
-if(TARGET === 'start' || !TARGET) {
+if(TARGET === 'start' || TARGET === 'server' || !TARGET) {
+  var plugins = [
+    new webpack.HotModuleReplacementPlugin()
+  ];
+
+  if(TARGET === 'server'){
+    data.npmMode = 'server';
+    plugins.push(new OpenBrowserPlugin({
+      url: 'http://localhost:3000'
+    }));
+  }
+
+  if(TARGET === 'start'){
+    // be careful, very dangerous. Update this module once this PR gets merged in. https://github.com/johnagan/clean-webpack-plugin/pull/5
+    plugins.push(new Clean(['build']));
+  }
+
   module.exports = merge(common, {
     devtool: 'eval-source-map',
     devServer: {
       historyApiFallback: true,
-      hot: true,
-      inline: true,
+      //hot: true,  // auto-reload seems to work better without this
       progress: true,
-      port: 3000
+      host: '0.0.0.0',
+      port: 3000,
+      contentBase: './build'
     },
 
-    module: {
-      loaders: [
-        {
-          test: /\.scss$/,
-          loaders: ['style', 'css', 'sass'],
-          include: APP_PATH
-        }
-      ]
-    },
+    plugins: plugins
 
-    plugins: [
-
-      new OpenBrowserPlugin({
-        url: 'http://localhost:3000'
-      }),
-
-      new webpack.HotModuleReplacementPlugin()
-    ]
   });
 }
 
-if(TARGET === 'build' || TARGET === 'stats') {
+if(TARGET === 'build') {  // `webpack -p` already minifies
+
+  module.exports = merge(common, {
+    plugins: [
+      new Clean(['build']),  // be careful, very dangerous, until it's updated see https://github.com/johnagan/clean-webpack-plugin/pull/5
+      new webpack.optimize.UglifyJsPlugin({
+        compress: {
+          warnings: false
+        }
+      })
+    ]
+  });
+
+}else if(TARGET === 'build' || TARGET === 'stats') {
+
   module.exports = merge(common, {
     entry: {
       app: APP_PATH,
@@ -124,7 +132,7 @@ if(TARGET === 'build' || TARGET === 'stats') {
     },
 
     plugins: [
-      new Clean(['build']),
+      new Clean(['build']),  // be careful, very dangerous, until it's updated see https://github.com/johnagan/clean-webpack-plugin/pull/5
 
       new ExtractTextPlugin('styles.[hash].css'),
 
@@ -147,14 +155,4 @@ if(TARGET === 'build' || TARGET === 'stats') {
       })
     ]
   });
-}
-
-function renderJSX(template, replacements) {
-  return function(templateParams, compilation) {
-    return template.replace(/%(\w*)%/g, function(match) {
-      var key = match.slice(1, -1);
-
-      return replacements[key] ? replacements[key] : match;
-    });
-  }
 }
